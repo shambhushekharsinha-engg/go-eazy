@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   ChevronRight, User, Briefcase, 
   Home, Building2, School, Hotel,
-  Check, Sparkles, MapPin, IndianRupee
+  Check, Sparkles, MapPin, IndianRupee, Utensils
 } from 'lucide-react'
 import { PROPERTY_TYPES, CITIES } from '../../utils/constants'
 import { Button } from '../ui/Button'
 import { useAuth } from '../../hooks/useAuth'
+import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 
 const QUIZ_STEPS = [
@@ -51,22 +52,48 @@ const QUIZ_STEPS = [
 
 export const OnboardingQuiz = () => {
   const { user, profile, updateProfile } = useAuth()
+  const navigate = useNavigate()
   const [isOpen, setIsOpen] = useState(false)
   const [step, setStep] = useState(0)
   const [saving, setSaving] = useState(false)
   const [selections, setSelections] = useState({
+    role: '',
     persona: '',
     type: '',
     city: '',
     budget: null
   })
 
-  // Open quiz only for Tenant (role='user') who haven't completed onboarding
+  // Dynamically compute the onboarding steps based on user's current profile role status.
+  const steps = useMemo(() => {
+    const baseSteps = [...QUIZ_STEPS]
+    if (profile && !profile.role) {
+      return [
+        {
+          id: 'role_selection',
+          title: 'Select Your Account Type',
+          subtitle: 'What would you like to do on GoEazy?',
+          options: [
+            { id: 'user', label: 'Student / Professional', icon: School, desc: 'Find PGs, Hostels & Flats' },
+            { id: 'landlord', label: 'Landlord / Owner', icon: Home, desc: 'List & Manage Properties' },
+            { id: 'service_provider', label: 'Service Provider 🍱', icon: Utensils, desc: 'Offer Tiffin or Laundry services' }
+          ]
+        },
+        ...baseSteps
+      ]
+    }
+    return baseSteps
+  }, [profile])
+
+  // Open quiz only for Tenant (role='user') who haven't completed onboarding,
+  // OR for ANY authenticated user whose profile role is null (first-time Google OAuth sign-up)
   useEffect(() => {
     const isNewTenantUser = user && profile && profile.role === 'user' && !profile.onboarding_data
-    if (isNewTenantUser) {
+    const isRolelessOAuthUser = user && profile && !profile.role
+
+    if (isNewTenantUser || isRolelessOAuthUser) {
       setStep(0)
-      setSelections({ persona: '', type: '', city: '', budget: null })
+      setSelections({ role: '', persona: '', type: '', city: '', budget: null })
       setIsOpen(true)
     } else {
       setIsOpen(false)
@@ -77,15 +104,44 @@ export const OnboardingQuiz = () => {
   useEffect(() => {
     const handleReset = () => {
       setStep(0)
-      setSelections({ persona: '', type: '', city: '', budget: null })
+      setSelections({ role: 'user', persona: '', type: '', city: '', budget: null })
       setIsOpen(true)
     }
     window.addEventListener('goeazy_quiz_reset', handleReset)
     return () => window.removeEventListener('goeazy_quiz_reset', handleReset)
   }, [])
 
-  const handleNext = () => {
-    if (step < QUIZ_STEPS.length - 1) {
+  const handleNext = async () => {
+    const currentStep = steps[step]
+    
+    // Save chosen role immediately if it is a role selection step
+    if (currentStep.id === 'role_selection') {
+      if (!selections.role) {
+        toast.error('Please select an account type')
+        return
+      }
+      setSaving(true)
+      try {
+        await updateProfile({ role: selections.role })
+        toast.success(`Registered as ${selections.role === 'user' ? 'Tenant' : selections.role === 'landlord' ? 'Landlord' : 'Service Provider'}`)
+        
+        // Landlords and Service Providers do not need to fill in Tenant preferences
+        if (selections.role !== 'user') {
+          setIsOpen(false)
+          if (selections.role === 'landlord') navigate('/landlord')
+          else if (selections.role === 'service_provider') navigate('/service-provider')
+          return
+        }
+      } catch (err) {
+        console.error(err)
+        toast.error('Failed to update account type. Please try again.')
+        return
+      } finally {
+        setSaving(false)
+      }
+    }
+
+    if (step < steps.length - 1) {
       setStep(s => s + 1)
     } else {
       finishQuiz()
@@ -109,7 +165,7 @@ export const OnboardingQuiz = () => {
 
   if (!isOpen) return null
 
-  const currentStep = QUIZ_STEPS[step]
+  const currentStep = steps[step]
 
   return (
     <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
@@ -129,12 +185,12 @@ export const OnboardingQuiz = () => {
       >
         {/* Progress Bar */}
         <div className="absolute top-0 left-0 right-0 h-1.5 flex gap-0.5 bg-gray-100">
-          {QUIZ_STEPS.map((_, i) => (
+          {steps.map((_, i) => (
             <motion.div 
               key={i} 
               className="h-full bg-[#CA3433]"
               initial={{ width: 0 }}
-              animate={{ width: i <= step ? `${100 / QUIZ_STEPS.length}%` : 0 }}
+              animate={{ width: i <= step ? `${100 / steps.length}%` : 0 }}
               transition={{ duration: 0.4 }}
             />
           ))}
@@ -152,11 +208,37 @@ export const OnboardingQuiz = () => {
             >
               <div className="space-y-1">
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-50 text-[#CA3433] text-[10px] font-bold uppercase tracking-widest">
-                  <Sparkles size={11} /> Step {step + 1} of {QUIZ_STEPS.length}
+                  <Sparkles size={11} /> Step {step + 1} of {steps.length}
                 </span>
                 <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight pt-1">{currentStep.title}</h2>
                 <p className="text-gray-500 font-medium text-sm">{currentStep.subtitle}</p>
               </div>
+
+              {/* Role Selection Step */}
+              {currentStep.id === 'role_selection' && (
+                <div className="grid grid-cols-1 gap-3">
+                  {currentStep.options.map(opt => {
+                    const Icon = opt.icon
+                    const active = selections.role === opt.id
+                    return (
+                      <button
+                        key={opt.id}
+                        onClick={() => setSelections(s => ({ ...s, role: opt.id }))}
+                        className={`group flex items-center gap-4 p-4 rounded-2xl border-2 transition-all text-left ${active ? 'border-[#CA3433] bg-red-50/50' : 'border-gray-100 hover:border-gray-200'}`}
+                      >
+                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${active ? 'bg-[#CA3433] text-white' : 'bg-gray-50 text-gray-400 group-hover:bg-gray-100'}`}>
+                          <Icon size={22} />
+                        </div>
+                        <div className="flex-1">
+                          <h4 className={`font-bold ${active ? 'text-[#CA3433]' : 'text-gray-900'}`}>{opt.label}</h4>
+                          <p className="text-xs text-gray-400">{opt.desc}</p>
+                        </div>
+                        {active && <Check size={18} className="text-[#CA3433]" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
 
               {/* Persona Step */}
               {currentStep.id === 'persona' && (
@@ -254,17 +336,17 @@ export const OnboardingQuiz = () => {
 
           <div className="mt-8 flex items-center justify-between pt-5 border-t border-gray-100">
             <p className="text-xs text-gray-400">
-              {step + 1} / {QUIZ_STEPS.length} — {Math.round(((step + 1) / QUIZ_STEPS.length) * 100)}% done
+              {step + 1} / {steps.length} — {Math.round(((step + 1) / steps.length) * 100)}% done
             </p>
             <Button 
               disabled={!selections[currentStep.id] || saving}
               onClick={handleNext}
               variant="primary" 
               className="rounded-full px-7 py-2.5 bg-[#CA3433] hover:bg-[#ac2d2c] shadow-lg shadow-red-500/20 group"
-              loading={saving && step === QUIZ_STEPS.length - 1}
+              loading={saving && step === steps.length - 1}
             >
               <span className="flex items-center gap-2 text-sm">
-                {step === QUIZ_STEPS.length - 1 ? 'Find My Match' : 'Next'}
+                {step === steps.length - 1 ? 'Find My Match' : 'Next'}
                 <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
               </span>
             </Button>
