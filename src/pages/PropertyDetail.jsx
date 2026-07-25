@@ -88,6 +88,8 @@ export const PropertyDetail = () => {
   }, [])
 
   useEffect(() => {
+    setHasUnlocked(false)
+    setGatedData(null)
     fetchPropertyById(id)
     fetchReviews(id)
     checkUnlockStatus()
