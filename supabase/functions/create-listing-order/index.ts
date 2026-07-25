@@ -65,6 +65,23 @@ serve(async (req: Request) => {
 
     const user = authData.user
 
+    // 1b. Rate limiting: limit listing order creation to 5 per hour
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    const { count: recentAttempts, error: countError } = await supabaseAdmin
+      .from('payment_attempts')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .gte('created_at', oneHourAgo)
+
+    if (countError) {
+      console.error('Rate limit check error:', countError)
+    } else if ((recentAttempts || 0) >= 5) {
+      return new Response(JSON.stringify({ error: 'Too many listing requests. Try again in an hour.' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 429
+      })
+    }
+
     // 2. Check secrets
     const key_id = Deno.env.get('RAZORPAY_KEY_ID')
     const key_secret = Deno.env.get('RAZORPAY_KEY_SECRET')
@@ -104,6 +121,17 @@ serve(async (req: Request) => {
     }
 
     const order = await resp.json()
+
+    // Log the payment attempt on success
+    const { error: logError } = await supabaseAdmin
+      .from('payment_attempts')
+      .insert({
+        user_id: user.id,
+        property_id: '00000000-0000-0000-0000-000000000000' // Dummy property ID for listing creation attempt
+      })
+    if (logError) {
+      console.error('Failed to log payment attempt:', logError)
+    }
 
     return new Response(JSON.stringify(order), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
