@@ -86,12 +86,6 @@ export const LandlordDashboard = () => {
         .eq('id', visitId)
       if (error) throw error
 
-      const msg = `Your site visit request for "${propertyTitle || 'Property'}" has been ${action}.`
-      await supabase.from('notifications').insert({
-        user_id: userId,
-        message: msg
-      })
-
       toast.success(`Visit ${action} successfully`)
       setSiteVisits(prev => prev.filter(v => v.id !== visitId))
     } catch (err) {

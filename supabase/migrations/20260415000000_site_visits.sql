@@ -41,10 +41,37 @@ DO $$ BEGIN
   CREATE POLICY "Users can view their notifications" ON public.notifications FOR SELECT USING (auth.uid() = user_id);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-DO $$ BEGIN
-  CREATE POLICY "System can insert notifications" ON public.notifications FOR INSERT WITH CHECK (true);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- Drop the insecure public insert policy
+DROP POLICY IF EXISTS "System can insert notifications" ON public.notifications;
 
 DO $$ BEGIN
   CREATE POLICY "Users can update their notifications" ON public.notifications FOR UPDATE USING (auth.uid() = user_id);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Trigger to automatically create notifications on site visit insert or update
+CREATE OR REPLACE FUNCTION handle_site_visit_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  p_title text;
+BEGIN
+  -- Get property title
+  SELECT title INTO p_title FROM public.properties WHERE id = NEW.property_id;
+
+  IF (TG_OP = 'INSERT') THEN
+    -- Notify the landlord when a user requests a visit
+    INSERT INTO public.notifications (user_id, message)
+    VALUES (NEW.landlord_id, 'New site visit request received for "' || COALESCE(p_title, 'Property') || '".');
+  ELSIF (TG_OP = 'UPDATE' AND OLD.status IS DISTINCT FROM NEW.status) THEN
+    -- Notify the tenant when the landlord approves/declines
+    INSERT INTO public.notifications (user_id, message)
+    VALUES (NEW.user_id, 'Your site visit request for "' || COALESCE(p_title, 'Property') || '" has been ' || NEW.status || '.');
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE TRIGGER on_site_visit_change
+  AFTER INSERT OR UPDATE ON public.site_visits
+  FOR EACH ROW
+  EXECUTE FUNCTION handle_site_visit_change();
+
