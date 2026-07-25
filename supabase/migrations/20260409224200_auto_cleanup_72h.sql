@@ -15,6 +15,8 @@ $$ LANGUAGE plpgsql;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+        -- Safely unschedule previous iterations of the job
+        PERFORM cron.unschedule('cleanup-recently-viewed');
         EXECUTE 'SELECT cron.schedule(''cleanup-recently-viewed'', ''0 * * * *'', ''SELECT delete_old_recently_viewed()'')';
     END IF;
 END $$;
