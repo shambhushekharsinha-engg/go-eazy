@@ -119,11 +119,22 @@ serve(async (req: Request) => {
     }
 
     // 4. All checks pass — create the property using the same admin client
+    const {
+      title, description, price, city, area, pincode, type,
+      amenities, images, availability, nearby_landmarks,
+      contact_phone, contact_email, exact_location,
+      latitude, longitude, map_address
+    } = property_data
+
     const { data: property, error: insertError } = await supabaseAdmin
       .from('properties')
       .insert({
-        ...property_data,
+        title, description, price, city, area, pincode, type,
+        amenities, images, availability, nearby_landmarks,
+        contact_phone, contact_email, exact_location,
+        latitude, longitude, map_address,
         landlord_id: user.id,
+        views: 0,
       })
       .select()
       .single()
