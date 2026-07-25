@@ -83,6 +83,7 @@ serve(async (req) => {
     const notes     = paymentEntity?.notes || orderEntity?.notes || {}
     const userId    = notes?.user_id
     const propertyId = notes?.property_id
+    const isListing = notes?.purpose === 'property_listing'
 
     // 5. Validate UUIDs from notes — reject garbage/forged data
     if (!userId || !UUID_REGEX.test(userId)) {
@@ -90,34 +91,37 @@ serve(async (req) => {
       return new Response('OK', { status: 200 }) // Still return 200 so Razorpay stops retrying
     }
 
-    if (!propertyId || !UUID_REGEX.test(propertyId)) {
+    if (!isListing && (!propertyId || !UUID_REGEX.test(propertyId))) {
       console.error('Webhook: invalid or missing property_id in notes:', propertyId)
       return new Response('OK', { status: 200 })
     }
 
     // 6. Verify payment amount and currency (prevent tampered webhooks)
-    if (event === 'payment.captured') {
-      const amount   = paymentEntity?.amount
-      const currency = paymentEntity?.currency
-      const status   = paymentEntity?.status
+    const amount = paymentEntity?.amount || orderEntity?.amount
+    const currency = paymentEntity?.currency || orderEntity?.currency
+    const expectedAmount = isListing ? 19900 : 900
 
-      if (amount !== 900) {
-        console.error(`Webhook: unexpected amount ${amount}, expected 900`)
-        return new Response('OK', { status: 200 })
-      }
-
-      if (currency !== 'INR') {
-        console.error(`Webhook: unexpected currency ${currency}`)
-        return new Response('OK', { status: 200 })
-      }
-
-      if (status !== 'captured') {
-        console.error(`Webhook: payment not captured, status: ${status}`)
-        return new Response('OK', { status: 200 })
-      }
+    if (amount !== expectedAmount) {
+      console.error(`Webhook: unexpected amount ${amount}, expected ${expectedAmount}`)
+      return new Response('OK', { status: 200 })
     }
 
-    // 7. All checks passed — record the unlock in database
+    if (currency !== 'INR') {
+      console.error(`Webhook: unexpected currency ${currency}`)
+      return new Response('OK', { status: 200 })
+    }
+
+    if (event === 'payment.captured' && paymentEntity?.status !== 'captured') {
+      console.error(`Webhook: payment not captured, status: ${paymentEntity?.status}`)
+      return new Response('OK', { status: 200 })
+    }
+
+    // 7. Process based on payment purpose
+    if (isListing) {
+      console.log(`Webhook: Successfully verified listing payment for user ${userId}`)
+      return new Response('OK', { status: 200 })
+    }
+
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
